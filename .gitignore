@@ -153,6 +153,9 @@ config/secrets.yaml
 backup/
 temp/
 
+# Kiro IDE files
+.kiro/
+
 # Docker
 .dockerignore
 
