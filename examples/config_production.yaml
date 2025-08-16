@@ -1,0 +1,323 @@
+# Production configuration for Kafka Self-Healing system
+# This configuration includes comprehensive monitoring, security, and resilience features
+
+cluster:
+  kafka_brokers:
+    - node_id: kafka-broker-1
+      host: kafka1.example.com
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 5
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 300
+    
+    - node_id: kafka-broker-2
+      host: kafka2.example.com
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 5
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 300
+    
+    - node_id: kafka-broker-3
+      host: kafka3.example.com
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 5
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 300
+
+  zookeeper_nodes:
+    - node_id: zookeeper-1
+      host: zk1.example.com
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 120
+    
+    - node_id: zookeeper-2
+      host: zk2.example.com
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 120
+    
+    - node_id: zookeeper-3
+      host: zk3.example.com
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 120
+
+monitoring:
+  interval_seconds: 15
+  timeout_seconds: 30
+  concurrent_checks: true
+  health_check_retries: 3
+  methods: ["socket", "jmx", "zookeeper"]
+  
+  # JMX monitoring configuration
+  jmx:
+    connection_timeout: 10
+    read_timeout: 15
+    authentication: true
+    username: ${JMX_USERNAME}
+    password: ${JMX_PASSWORD}
+  
+  # Socket monitoring configuration
+  socket:
+    connection_timeout: 5
+    read_timeout: 10
+  
+  # Zookeeper monitoring configuration
+  zookeeper:
+    four_letter_words: ["ruok", "stat", "mntr"]
+    timeout: 10
+
+recovery:
+  # Global retry policy
+  max_attempts: 5
+  initial_delay_seconds: 10
+  backoff_multiplier: 2.0
+  max_delay_seconds: 600
+  
+  # Recovery actions
+  actions: ["restart_service", "ansible", "script"]
+  
+  # Service restart configuration
+  restart_service:
+    service_manager: "systemctl"
+    kafka_service_name: "kafka"
+    zookeeper_service_name: "zookeeper"
+    timeout: 60
+    pre_restart_commands:
+      - "systemctl stop kafka-connect"
+      - "systemctl stop kafka-rest"
+    post_restart_commands:
+      - "sleep 30"
+      - "systemctl start kafka-connect"
+      - "systemctl start kafka-rest"
+  
+  # Ansible playbook configuration
+  ansible:
+    playbook_directory: "/opt/kafka-recovery/playbooks"
+    inventory_file: "/opt/kafka-recovery/inventory/production"
+    timeout: 300
+    extra_vars:
+      environment: "production"
+      notification_webhook: "${SLACK_WEBHOOK_URL}"
+  
+  # Script execution configuration
+  script:
+    script_directory: "/opt/kafka-recovery/scripts"
+    timeout: 120
+    environment_variables:
+      KAFKA_HOME: "/opt/kafka"
+      JAVA_HOME: "/usr/lib/jvm/java-11-openjdk"
+      ENVIRONMENT: "production"
+
+notifications:
+  # Primary SMTP configuration
+  smtp:
+    host: smtp.company.com
+    port: 587
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    use_tls: true
+    use_ssl: false
+    from_email: "kafka-alerts@company.com"
+    to_emails:
+      - "kafka-ops@company.com"
+      - "platform-team@company.com"
+      - "oncall@company.com"
+    
+    # Email templates
+    templates:
+      failure_subject: "[CRITICAL] Kafka Cluster Alert: {node_id} Recovery Failed"
+      recovery_subject: "[INFO] Kafka Cluster: {node_id} Recovered Successfully"
+      escalation_subject: "[URGENT] Kafka Cluster: Manual Intervention Required for {node_id}"
+  
+  # Notification triggers
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+    on_performance_degradation: true
+  
+  # Rate limiting
+  rate_limiting:
+    max_notifications_per_hour: 20
+    cooldown_period_minutes: 10
+    escalation_threshold: 3
+
+logging:
+  # Application logging
+  level: INFO
+  file: /var/log/kafka-self-healing/application.log
+  max_size_mb: 100
+  backup_count: 10
+  format: "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+  
+  # Audit logging
+  audit:
+    enabled: true
+    file: /var/log/kafka-self-healing/audit.log
+    max_size_mb: 200
+    backup_count: 20
+    include_sensitive_data: false
+  
+  # Performance logging
+  performance:
+    enabled: true
+    file: /var/log/kafka-self-healing/performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 2000
+
+security:
+  # Credential management
+  credentials:
+    storage_method: "environment"
+    encryption_key_file: "/etc/kafka-healing/encryption.key"
+  
+  # SSL/TLS configuration
+  ssl:
+    enabled: true
+    keystore_path: "/etc/kafka-healing/ssl/keystore.jks"
+    keystore_password_env: "KEYSTORE_PASSWORD"
+    truststore_path: "/etc/kafka-healing/ssl/truststore.jks"
+    truststore_password_env: "TRUSTSTORE_PASSWORD"
+    protocol: "TLSv1.2"
+  
+  # SASL authentication
+  sasl:
+    enabled: true
+    mechanism: "SCRAM-SHA-256"
+    username_env: "KAFKA_USERNAME"
+    password_env: "KAFKA_PASSWORD"
+
+plugins:
+  # Plugin discovery
+  discovery:
+    enabled: true
+    directories:
+      - "/opt/kafka-healing/plugins/monitoring"
+      - "/opt/kafka-healing/plugins/recovery"
+      - "/opt/kafka-healing/plugins/notification"
+    auto_load: true
+  
+  # Monitoring plugins
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+      config:
+        metrics_to_check:
+          - "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"
+          - "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"
+          - "kafka.server:type=ReplicaManager,name=LeaderCount"
+    
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+  
+  # Recovery plugins
+  recovery_plugins:
+    service_restart:
+      enabled: true
+      priority: 1
+    
+    ansible_playbook:
+      enabled: true
+      priority: 2
+    
+    script_execution:
+      enabled: true
+      priority: 3
+  
+  # Notification plugins
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+    
+    slack_notification:
+      enabled: false
+      priority: 2
+      config:
+        webhook_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#kafka-alerts"
+
+system:
+  # Resource limits
+  max_concurrent_operations: 20
+  memory_limit_mb: 1024
+  cpu_limit_percent: 75
+  
+  # Graceful shutdown
+  shutdown_timeout_seconds: 60
+  
+  # Self-monitoring
+  self_monitoring:
+    enabled: true
+    interval_seconds: 30
+    memory_threshold_mb: 800
+    cpu_threshold_percent: 60
+    disk_threshold_percent: 85
+  
+  # Metrics export
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "prometheus"
+    include_system_metrics: true
+    include_jvm_metrics: true
+
+# Environment-specific overrides
+environment:
+  name: "production"
+  datacenter: "us-east-1"
+  cluster_name: "kafka-prod-cluster"
+  
+  # High availability settings
+  high_availability:
+    enabled: true
+    min_healthy_brokers: 2
+    min_healthy_zookeepers: 2
+    cross_datacenter_monitoring: false
+  
+  # Compliance and governance
+  compliance:
+    data_retention_days: 90
+    audit_log_retention_days: 365
+    encrypt_logs: true
+    pii_scrubbing: true

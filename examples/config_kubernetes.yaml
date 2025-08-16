@@ -1,0 +1,297 @@
+# Kubernetes deployment configuration for Kafka Self-Healing system
+# This configuration is designed for Kafka clusters running in Kubernetes
+
+cluster:
+  kafka_brokers:
+    - node_id: kafka-0
+      host: kafka-0.kafka-headless.kafka.svc.cluster.local
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx", "kubernetes"]
+      recovery_actions: ["restart_pod", "scale_statefulset"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 2.0
+        max_delay_seconds: 180
+    
+    - node_id: kafka-1
+      host: kafka-1.kafka-headless.kafka.svc.cluster.local
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx", "kubernetes"]
+      recovery_actions: ["restart_pod", "scale_statefulset"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 2.0
+        max_delay_seconds: 180
+    
+    - node_id: kafka-2
+      host: kafka-2.kafka-headless.kafka.svc.cluster.local
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx", "kubernetes"]
+      recovery_actions: ["restart_pod", "scale_statefulset"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 2.0
+        max_delay_seconds: 180
+
+  zookeeper_nodes:
+    - node_id: zookeeper-0
+      host: zookeeper-0.zookeeper-headless.kafka.svc.cluster.local
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper", "kubernetes"]
+      recovery_actions: ["restart_pod"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 20
+        backoff_multiplier: 1.5
+        max_delay_seconds: 90
+    
+    - node_id: zookeeper-1
+      host: zookeeper-1.zookeeper-headless.kafka.svc.cluster.local
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper", "kubernetes"]
+      recovery_actions: ["restart_pod"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 20
+        backoff_multiplier: 1.5
+        max_delay_seconds: 90
+    
+    - node_id: zookeeper-2
+      host: zookeeper-2.zookeeper-headless.kafka.svc.cluster.local
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper", "kubernetes"]
+      recovery_actions: ["restart_pod"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 20
+        backoff_multiplier: 1.5
+        max_delay_seconds: 90
+
+monitoring:
+  interval_seconds: 20
+  timeout_seconds: 15
+  concurrent_checks: true
+  health_check_retries: 2
+  methods: ["socket", "jmx", "zookeeper", "kubernetes"]
+  
+  jmx:
+    connection_timeout: 8
+    read_timeout: 12
+    authentication: false
+  
+  socket:
+    connection_timeout: 5
+    read_timeout: 8
+  
+  zookeeper:
+    four_letter_words: ["ruok", "stat"]
+    timeout: 8
+  
+  kubernetes:
+    namespace: "kafka"
+    kubeconfig_path: "/var/run/secrets/kubernetes.io/serviceaccount"
+    api_timeout: 10
+    check_pod_status: true
+    check_resource_usage: true
+
+recovery:
+  max_attempts: 3
+  initial_delay_seconds: 15
+  backoff_multiplier: 2.0
+  max_delay_seconds: 300
+  
+  actions: ["restart_pod", "scale_statefulset", "kubectl_exec"]
+  
+  # Kubernetes pod restart
+  restart_pod:
+    namespace: "kafka"
+    timeout: 120
+    grace_period_seconds: 30
+    wait_for_ready: true
+    ready_timeout: 180
+  
+  # StatefulSet scaling (for emergency recovery)
+  scale_statefulset:
+    namespace: "kafka"
+    timeout: 300
+    scale_down_replicas: 0
+    scale_up_delay: 60
+    wait_for_ready: true
+  
+  # Execute commands in pods
+  kubectl_exec:
+    namespace: "kafka"
+    timeout: 90
+    commands:
+      kafka_restart: ["/opt/kafka/bin/kafka-server-stop.sh", "/opt/kafka/bin/kafka-server-start.sh", "/opt/kafka/config/server.properties"]
+      zk_restart: ["/opt/zookeeper/bin/zkServer.sh", "restart"]
+
+notifications:
+  smtp:
+    host: ${SMTP_HOST:-smtp.cluster.local}
+    port: ${SMTP_PORT:-587}
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    use_tls: true
+    from_email: "kafka-k8s@example.com"
+    to_emails:
+      - "k8s-ops@example.com"
+      - "platform-team@example.com"
+    
+    templates:
+      failure_subject: "[K8S] Kafka Pod Alert: {node_id} Recovery Failed"
+      recovery_subject: "[K8S] Kafka Pod: {node_id} Recovered"
+  
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+    on_pod_crash_loop: true
+  
+  rate_limiting:
+    max_notifications_per_hour: 20
+    cooldown_period_minutes: 5
+
+logging:
+  level: INFO
+  file: /var/log/kafka-self-healing/k8s.log
+  max_size_mb: 100
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - [K8S] - %(message)s"
+  
+  audit:
+    enabled: true
+    file: /var/log/kafka-self-healing/k8s_audit.log
+    max_size_mb: 100
+    backup_count: 5
+    include_sensitive_data: false
+  
+  performance:
+    enabled: true
+    file: /var/log/kafka-self-healing/k8s_performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 2000
+
+security:
+  credentials:
+    storage_method: "kubernetes_secrets"
+    secret_name: "kafka-healing-secrets"
+    secret_namespace: "kafka"
+  
+  ssl:
+    enabled: true
+    ca_cert_path: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  
+  rbac:
+    service_account: "kafka-self-healing"
+    cluster_role: "kafka-healing-operator"
+
+plugins:
+  discovery:
+    enabled: true
+    directories:
+      - "/opt/kafka-healing/plugins/monitoring"
+      - "/opt/kafka-healing/plugins/recovery"
+      - "/opt/kafka-healing/plugins/notification"
+    auto_load: true
+  
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+    kubernetes_monitoring:
+      enabled: true
+      priority: 4
+      config:
+        check_pod_health: true
+        check_resource_limits: true
+        check_persistent_volumes: true
+  
+  recovery_plugins:
+    kubernetes_pod_restart:
+      enabled: true
+      priority: 1
+    kubernetes_statefulset_scale:
+      enabled: true
+      priority: 2
+    kubectl_exec:
+      enabled: true
+      priority: 3
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+
+system:
+  max_concurrent_operations: 15
+  memory_limit_mb: 512
+  cpu_limit_percent: 60
+  
+  shutdown_timeout_seconds: 45
+  
+  self_monitoring:
+    enabled: true
+    interval_seconds: 30
+    memory_threshold_mb: 400
+    cpu_threshold_percent: 70
+  
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "prometheus"
+
+# Kubernetes-specific configuration
+kubernetes:
+  # Cluster connection
+  cluster:
+    kubeconfig_path: "/var/run/secrets/kubernetes.io/serviceaccount"
+    namespace: "kafka"
+    api_timeout: 30
+  
+  # Resource management
+  resources:
+    kafka_statefulset: "kafka"
+    zookeeper_statefulset: "zookeeper"
+    kafka_service: "kafka-headless"
+    zookeeper_service: "zookeeper-headless"
+  
+  # Pod management
+  pods:
+    restart_policy: "Always"
+    termination_grace_period: 30
+    readiness_probe_timeout: 60
+    liveness_probe_timeout: 30
+  
+  # Monitoring integration
+  monitoring:
+    prometheus_operator: true
+    service_monitor: true
+    pod_monitor: true
+    metrics_port: 8080
+  
+  # Security
+  security:
+    pod_security_policy: true
+    network_policies: true
+    service_account: "kafka-self-healing"
+    
+  # Storage
+  storage:
+    storage_class: "fast-ssd"
+    volume_claim_templates: true
+    backup_enabled: false

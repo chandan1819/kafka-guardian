@@ -1,0 +1,358 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, '3.10', '3.11']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-html pytest-xdist
+
+    - name: Run unit tests
+      run: |
+        pytest tests/ \
+          --ignore=tests/test_e2e.py \
+          --cov=src/kafka_self_healing \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --junitxml=test-results.xml \
+          -v
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: unit-test-results-${{ matrix.python-version }}
+        path: test-results.xml
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-html psutil requests
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Start test cluster
+      run: |
+        docker-compose -f docker-compose.test.yml up -d
+        
+        # Wait for cluster to be ready
+        timeout=120
+        elapsed=0
+        
+        echo "Waiting for test cluster to be ready..."
+        while [ $elapsed -lt $timeout ]; do
+          if docker exec test-zookeeper bash -c "echo 'ruok' | nc localhost 2181" | grep -q "imok" 2>/dev/null; then
+            if docker exec test-kafka1 kafka-broker-api-versions --bootstrap-server localhost:9092 &>/dev/null; then
+              if docker exec test-kafka2 kafka-broker-api-versions --bootstrap-server localhost:9093 &>/dev/null; then
+                echo "Test cluster is ready"
+                break
+              fi
+            fi
+          fi
+          
+          sleep 5
+          elapsed=$((elapsed + 5))
+          echo -n "."
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "Test cluster failed to start"
+          docker-compose -f docker-compose.test.yml logs
+          exit 1
+        fi
+
+    - name: Run integration tests
+      run: |
+        mkdir -p test_logs test_reports
+        pytest tests/test_e2e.py \
+          --html=test_reports/e2e_tests.html \
+          --self-contained-html \
+          --junitxml=test_reports/e2e_tests.xml \
+          -v -s
+      timeout-minutes: 10
+
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: |
+          test_reports/
+          test_logs/
+
+    - name: Stop test cluster
+      if: always()
+      run: |
+        docker-compose -f docker-compose.test.yml down -v
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psutil requests
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Start test cluster
+      run: |
+        docker-compose -f docker-compose.test.yml up -d
+        
+        # Wait for cluster to be ready
+        timeout=120
+        elapsed=0
+        
+        echo "Waiting for test cluster to be ready..."
+        while [ $elapsed -lt $timeout ]; do
+          if docker exec test-zookeeper bash -c "echo 'ruok' | nc localhost 2181" | grep -q "imok" 2>/dev/null; then
+            if docker exec test-kafka1 kafka-broker-api-versions --bootstrap-server localhost:9092 &>/dev/null; then
+              if docker exec test-kafka2 kafka-broker-api-versions --bootstrap-server localhost:9093 &>/dev/null; then
+                echo "Test cluster is ready"
+                break
+              fi
+            fi
+          fi
+          
+          sleep 5
+          elapsed=$((elapsed + 5))
+          echo -n "."
+        done
+
+    - name: Create benchmark config
+      run: |
+        mkdir -p test_reports
+        cat > benchmark_config.yaml << EOF
+        cluster:
+          kafka_brokers:
+            - node_id: kafka1
+              host: localhost
+              port: 9092
+              jmx_port: 9999
+            - node_id: kafka2
+              host: localhost
+              port: 9093
+              jmx_port: 9998
+          zookeeper_nodes:
+            - node_id: zk1
+              host: localhost
+              port: 2181
+        
+        monitoring:
+          interval_seconds: 5
+          timeout_seconds: 10
+          methods: ["socket", "jmx"]
+        
+        recovery:
+          max_attempts: 2
+          initial_delay_seconds: 1
+          backoff_multiplier: 2.0
+          max_delay_seconds: 10
+          actions: ["restart_service"]
+        
+        notifications:
+          smtp:
+            host: localhost
+            port: 1025
+            from_email: test@example.com
+            to_emails: ["admin@example.com"]
+        
+        logging:
+          level: INFO
+          file: test_logs/benchmark.log
+        EOF
+
+    - name: Run performance benchmarks
+      run: |
+        mkdir -p test_logs
+        timeout 600 python tests/benchmark.py \
+          --config benchmark_config.yaml \
+          --output test_reports/benchmark_results.json \
+          --report test_reports/benchmark_report.txt || true
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-test-results
+        path: |
+          test_reports/benchmark_results.json
+          test_reports/benchmark_report.txt
+          test_logs/
+
+    - name: Stop test cluster
+      if: always()
+      run: |
+        docker-compose -f docker-compose.test.yml down -v
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install security scanning tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+
+    - name: Run Bandit security scan
+      run: |
+        bandit -r src/ -f json -o bandit-report.json || true
+        bandit -r src/ -f txt
+
+    - name: Run Safety dependency scan
+      run: |
+        safety check --json --output safety-report.json || true
+        safety check
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-scan-results
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, security-scan]
+    if: always()
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Generate test summary
+      run: |
+        echo "# Test Summary" > test-summary.md
+        echo "" >> test-summary.md
+        echo "## Test Results" >> test-summary.md
+        
+        # Count unit test results
+        if ls unit-test-results-*/test-results.xml 1> /dev/null 2>&1; then
+          echo "### Unit Tests" >> test-summary.md
+          for file in unit-test-results-*/test-results.xml; do
+            python_version=$(echo $file | cut -d'/' -f1 | cut -d'-' -f4-)
+            tests=$(grep -o 'tests="[0-9]*"' $file | cut -d'"' -f2)
+            failures=$(grep -o 'failures="[0-9]*"' $file | cut -d'"' -f2)
+            errors=$(grep -o 'errors="[0-9]*"' $file | cut -d'"' -f2)
+            echo "- Python $python_version: $tests tests, $failures failures, $errors errors" >> test-summary.md
+          done
+          echo "" >> test-summary.md
+        fi
+        
+        # Integration test results
+        if [ -f "integration-test-results/test_reports/e2e_tests.xml" ]; then
+          echo "### Integration Tests" >> test-summary.md
+          tests=$(grep -o 'tests="[0-9]*"' integration-test-results/test_reports/e2e_tests.xml | cut -d'"' -f2)
+          failures=$(grep -o 'failures="[0-9]*"' integration-test-results/test_reports/e2e_tests.xml | cut -d'"' -f2)
+          errors=$(grep -o 'errors="[0-9]*"' integration-test-results/test_reports/e2e_tests.xml | cut -d'"' -f2)
+          echo "- E2E Tests: $tests tests, $failures failures, $errors errors" >> test-summary.md
+          echo "" >> test-summary.md
+        fi
+        
+        # Performance test results
+        if [ -f "performance-test-results/benchmark_report.txt" ]; then
+          echo "### Performance Tests" >> test-summary.md
+          echo '```' >> test-summary.md
+          cat performance-test-results/benchmark_report.txt >> test-summary.md
+          echo '```' >> test-summary.md
+          echo "" >> test-summary.md
+        fi
+        
+        echo "## Artifacts" >> test-summary.md
+        echo "- Unit test results and coverage reports" >> test-summary.md
+        echo "- Integration test reports" >> test-summary.md
+        echo "- Performance benchmark results" >> test-summary.md
+        echo "- Security scan reports" >> test-summary.md
+
+    - name: Upload test summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-summary
+        path: test-summary.md
+
+    - name: Comment PR with test results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('test-summary.md')) {
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          }

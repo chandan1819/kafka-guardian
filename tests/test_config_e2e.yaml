@@ -1,0 +1,241 @@
+# End-to-end test configuration for Kafka Self-Healing system
+cluster:
+  kafka_brokers:
+    - node_id: kafka1
+      host: localhost
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "script"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 2
+        backoff_multiplier: 2.0
+        max_delay_seconds: 30
+    
+    - node_id: kafka2
+      host: localhost
+      port: 9093
+      jmx_port: 9998
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "script"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 2
+        backoff_multiplier: 2.0
+        max_delay_seconds: 30
+
+  zookeeper_nodes:
+    - node_id: zk1
+      host: localhost
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 5
+        backoff_multiplier: 1.5
+        max_delay_seconds: 20
+
+monitoring:
+  interval_seconds: 5
+  timeout_seconds: 10
+  concurrent_checks: true
+  health_check_retries: 2
+  methods: ["socket", "jmx", "zookeeper"]
+  
+  # Plugin-specific configurations
+  jmx:
+    connection_timeout: 5
+    read_timeout: 10
+    authentication: false
+  
+  socket:
+    connection_timeout: 3
+    read_timeout: 5
+  
+  zookeeper:
+    four_letter_words: ["ruok", "stat"]
+    timeout: 5
+
+recovery:
+  # Global retry policy (can be overridden per node)
+  max_attempts: 3
+  initial_delay_seconds: 2
+  backoff_multiplier: 2.0
+  max_delay_seconds: 60
+  
+  # Available recovery actions
+  actions: ["restart_service", "script", "ansible"]
+  
+  # Action-specific configurations
+  restart_service:
+    service_manager: "systemctl"  # or "docker"
+    kafka_service_name: "kafka"
+    zookeeper_service_name: "zookeeper"
+    timeout: 30
+  
+  script:
+    script_directory: "/opt/kafka-recovery/scripts"
+    timeout: 60
+    environment_variables:
+      KAFKA_HOME: "/opt/kafka"
+      JAVA_HOME: "/usr/lib/jvm/java-11-openjdk"
+  
+  ansible:
+    playbook_directory: "/opt/kafka-recovery/playbooks"
+    inventory_file: "/opt/kafka-recovery/inventory"
+    timeout: 120
+
+notifications:
+  # Email notifications via SMTP
+  smtp:
+    host: localhost
+    port: 1025
+    username: ""
+    password: ""
+    use_tls: false
+    use_ssl: false
+    from_email: "kafka-healing@example.com"
+    to_emails: 
+      - "admin@example.com"
+      - "ops-team@example.com"
+    
+    # Email templates
+    templates:
+      failure_subject: "Kafka Cluster Alert: Node {node_id} Recovery Failed"
+      recovery_subject: "Kafka Cluster: Node {node_id} Recovered"
+      
+  # Notification triggers
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+  
+  # Rate limiting to prevent spam
+  rate_limiting:
+    max_notifications_per_hour: 10
+    cooldown_period_minutes: 15
+
+logging:
+  # Main application logging
+  level: INFO
+  file: test_logs/kafka_self_healing.log
+  max_size_mb: 50
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Audit logging for compliance
+  audit:
+    enabled: true
+    file: test_logs/audit.log
+    max_size_mb: 100
+    backup_count: 10
+    include_sensitive_data: false
+  
+  # Performance logging
+  performance:
+    enabled: true
+    file: test_logs/performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 1000
+
+security:
+  # Credential management
+  credentials:
+    storage_method: "environment"  # or "file" or "external"
+    encryption_key_file: "/etc/kafka-healing/encryption.key"
+  
+  # SSL/TLS configuration
+  ssl:
+    enabled: false
+    keystore_path: "/etc/kafka-healing/keystore.jks"
+    keystore_password_env: "KEYSTORE_PASSWORD"
+    truststore_path: "/etc/kafka-healing/truststore.jks"
+    truststore_password_env: "TRUSTSTORE_PASSWORD"
+  
+  # SASL authentication
+  sasl:
+    enabled: false
+    mechanism: "PLAIN"  # or "SCRAM-SHA-256", "SCRAM-SHA-512"
+    username_env: "KAFKA_USERNAME"
+    password_env: "KAFKA_PASSWORD"
+
+plugins:
+  # Plugin discovery and loading
+  discovery:
+    enabled: true
+    directories: 
+      - "plugins/monitoring"
+      - "plugins/recovery"
+      - "plugins/notification"
+    auto_load: true
+  
+  # Plugin-specific configurations
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+  
+  recovery_plugins:
+    service_restart:
+      enabled: true
+      priority: 1
+    script_execution:
+      enabled: true
+      priority: 2
+    ansible_playbook:
+      enabled: false  # Disabled for testing
+      priority: 3
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+
+# System-wide settings
+system:
+  # Resource limits
+  max_concurrent_operations: 10
+  memory_limit_mb: 512
+  cpu_limit_percent: 50
+  
+  # Graceful shutdown
+  shutdown_timeout_seconds: 30
+  
+  # Health monitoring of the self-healing system itself
+  self_monitoring:
+    enabled: true
+    interval_seconds: 60
+    memory_threshold_mb: 400
+    cpu_threshold_percent: 80
+  
+  # Metrics and monitoring integration
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "prometheus"  # or "json"
+
+# Testing-specific configurations
+testing:
+  # Mock configurations for testing
+  mock_mode: false
+  simulate_failures: false
+  
+  # Test data retention
+  keep_test_logs: true
+  test_log_retention_days: 7
+  
+  # Performance testing
+  performance_testing:
+    enabled: false
+    duration_seconds: 300
+    load_multiplier: 1.0

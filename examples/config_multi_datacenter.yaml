@@ -1,0 +1,385 @@
+# Multi-datacenter configuration for Kafka Self-Healing system
+# This configuration supports monitoring Kafka clusters across multiple datacenters
+
+cluster:
+  # Primary datacenter (DC1)
+  kafka_brokers:
+    - node_id: dc1-kafka-1
+      host: kafka1.dc1.example.com
+      port: 9092
+      jmx_port: 9999
+      datacenter: "dc1"
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 5
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 300
+    
+    - node_id: dc1-kafka-2
+      host: kafka2.dc1.example.com
+      port: 9092
+      jmx_port: 9999
+      datacenter: "dc1"
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 5
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 300
+    
+    # Secondary datacenter (DC2)
+    - node_id: dc2-kafka-1
+      host: kafka1.dc2.example.com
+      port: 9092
+      jmx_port: 9999
+      datacenter: "dc2"
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 3  # Reduced for remote DC
+        initial_delay_seconds: 15
+        backoff_multiplier: 2.0
+        max_delay_seconds: 180
+    
+    - node_id: dc2-kafka-2
+      host: kafka2.dc2.example.com
+      port: 9092
+      jmx_port: 9999
+      datacenter: "dc2"
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "ansible"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 2.0
+        max_delay_seconds: 180
+
+  zookeeper_nodes:
+    # DC1 Zookeeper ensemble
+    - node_id: dc1-zk-1
+      host: zk1.dc1.example.com
+      port: 2181
+      datacenter: "dc1"
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 120
+    
+    - node_id: dc1-zk-2
+      host: zk2.dc1.example.com
+      port: 2181
+      datacenter: "dc1"
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 120
+    
+    # DC2 Zookeeper ensemble
+    - node_id: dc2-zk-1
+      host: zk1.dc2.example.com
+      port: 2181
+      datacenter: "dc2"
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 2  # Reduced for remote DC
+        initial_delay_seconds: 20
+        backoff_multiplier: 1.5
+        max_delay_seconds: 90
+
+monitoring:
+  interval_seconds: 30  # Increased for cross-DC latency
+  timeout_seconds: 45   # Increased for cross-DC latency
+  concurrent_checks: true
+  health_check_retries: 3
+  methods: ["socket", "jmx", "zookeeper"]
+  
+  # Datacenter-specific monitoring settings
+  datacenter_settings:
+    dc1:
+      interval_seconds: 15  # Faster for local DC
+      timeout_seconds: 20
+      priority: 1
+    dc2:
+      interval_seconds: 45  # Slower for remote DC
+      timeout_seconds: 60
+      priority: 2
+  
+  jmx:
+    connection_timeout: 15  # Increased for cross-DC
+    read_timeout: 20
+    authentication: true
+    username: ${JMX_USERNAME}
+    password: ${JMX_PASSWORD}
+  
+  socket:
+    connection_timeout: 10  # Increased for cross-DC
+    read_timeout: 15
+  
+  zookeeper:
+    four_letter_words: ["ruok", "stat", "mntr"]
+    timeout: 15  # Increased for cross-DC
+
+recovery:
+  max_attempts: 5
+  initial_delay_seconds: 15
+  backoff_multiplier: 2.0
+  max_delay_seconds: 600
+  
+  # Datacenter-specific recovery settings
+  datacenter_settings:
+    dc1:
+      max_attempts: 5
+      escalation_delay: 300  # 5 minutes
+    dc2:
+      max_attempts: 3  # Reduced for remote DC
+      escalation_delay: 600  # 10 minutes
+  
+  actions: ["restart_service", "ansible", "cross_dc_failover"]
+  
+  restart_service:
+    service_manager: "systemctl"
+    kafka_service_name: "kafka"
+    zookeeper_service_name: "zookeeper"
+    timeout: 90  # Increased timeout
+  
+  ansible:
+    playbook_directory: "/opt/kafka-recovery/playbooks"
+    inventory_file: "/opt/kafka-recovery/inventory/multi-dc"
+    timeout: 600  # Increased for cross-DC operations
+    extra_vars:
+      environment: "multi-datacenter"
+      primary_dc: "dc1"
+      secondary_dc: "dc2"
+  
+  # Cross-datacenter failover
+  cross_dc_failover:
+    enabled: true
+    primary_dc: "dc1"
+    secondary_dc: "dc2"
+    failover_threshold: 2  # Number of failed nodes to trigger failover
+    failover_timeout: 900  # 15 minutes
+    automatic_failback: false
+
+notifications:
+  smtp:
+    host: smtp.company.com
+    port: 587
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    use_tls: true
+    from_email: "kafka-multidc@company.com"
+    to_emails:
+      - "kafka-ops@company.com"
+      - "dc1-ops@company.com"
+      - "dc2-ops@company.com"
+    
+    # Datacenter-specific notification lists
+    datacenter_contacts:
+      dc1:
+        - "dc1-oncall@company.com"
+        - "dc1-platform@company.com"
+      dc2:
+        - "dc2-oncall@company.com"
+        - "dc2-platform@company.com"
+    
+    templates:
+      failure_subject: "[MULTI-DC] Kafka Alert: {datacenter}/{node_id} Recovery Failed"
+      recovery_subject: "[MULTI-DC] Kafka: {datacenter}/{node_id} Recovered"
+      failover_subject: "[CRITICAL] Kafka Cross-DC Failover: {datacenter} -> {target_datacenter}"
+  
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+    on_cross_dc_failover: true
+    on_datacenter_isolation: true
+  
+  rate_limiting:
+    max_notifications_per_hour: 30  # Increased for multi-DC
+    cooldown_period_minutes: 5
+    escalation_threshold: 2
+
+logging:
+  level: INFO
+  file: /var/log/kafka-self-healing/multidc.log
+  max_size_mb: 200  # Increased for multi-DC logging
+  backup_count: 15
+  format: "%(asctime)s - %(name)s - %(levelname)s - [%(datacenter)s] - %(message)s"
+  
+  audit:
+    enabled: true
+    file: /var/log/kafka-self-healing/multidc_audit.log
+    max_size_mb: 300
+    backup_count: 20
+    include_sensitive_data: false
+    include_datacenter_info: true
+  
+  performance:
+    enabled: true
+    file: /var/log/kafka-self-healing/multidc_performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 5000  # Increased for cross-DC
+
+security:
+  credentials:
+    storage_method: "environment"
+    per_datacenter_credentials: true
+  
+  ssl:
+    enabled: true
+    keystore_path: "/etc/kafka-healing/ssl/keystore.jks"
+    keystore_password_env: "KEYSTORE_PASSWORD"
+    truststore_path: "/etc/kafka-healing/ssl/truststore.jks"
+    truststore_password_env: "TRUSTSTORE_PASSWORD"
+    protocol: "TLSv1.2"
+    
+    # Datacenter-specific SSL settings
+    datacenter_ssl:
+      dc1:
+        keystore_path: "/etc/kafka-healing/ssl/dc1/keystore.jks"
+        truststore_path: "/etc/kafka-healing/ssl/dc1/truststore.jks"
+      dc2:
+        keystore_path: "/etc/kafka-healing/ssl/dc2/keystore.jks"
+        truststore_path: "/etc/kafka-healing/ssl/dc2/truststore.jks"
+  
+  sasl:
+    enabled: true
+    mechanism: "SCRAM-SHA-256"
+    username_env: "KAFKA_USERNAME"
+    password_env: "KAFKA_PASSWORD"
+
+plugins:
+  discovery:
+    enabled: true
+    directories:
+      - "/opt/kafka-healing/plugins/monitoring"
+      - "/opt/kafka-healing/plugins/recovery"
+      - "/opt/kafka-healing/plugins/notification"
+    auto_load: true
+  
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+    cross_dc_monitoring:
+      enabled: true
+      priority: 4
+      config:
+        latency_threshold_ms: 1000
+        packet_loss_threshold: 0.05
+  
+  recovery_plugins:
+    service_restart:
+      enabled: true
+      priority: 1
+    ansible_playbook:
+      enabled: true
+      priority: 2
+    cross_dc_failover:
+      enabled: true
+      priority: 3
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+    datacenter_specific_notification:
+      enabled: true
+      priority: 2
+
+system:
+  max_concurrent_operations: 25  # Increased for multi-DC
+  memory_limit_mb: 2048  # Increased for multi-DC operations
+  cpu_limit_percent: 70
+  
+  shutdown_timeout_seconds: 90  # Increased for graceful cross-DC shutdown
+  
+  self_monitoring:
+    enabled: true
+    interval_seconds: 45
+    memory_threshold_mb: 1600
+    cpu_threshold_percent: 60
+    network_latency_threshold_ms: 500
+  
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "prometheus"
+    include_datacenter_labels: true
+
+# Multi-datacenter specific configuration
+multi_datacenter:
+  # Datacenter definitions
+  datacenters:
+    dc1:
+      name: "Primary Datacenter"
+      location: "US East"
+      priority: 1
+      is_primary: true
+      network_latency_sla_ms: 50
+    dc2:
+      name: "Secondary Datacenter"
+      location: "US West"
+      priority: 2
+      is_primary: false
+      network_latency_sla_ms: 100
+  
+  # Cross-datacenter monitoring
+  cross_dc_monitoring:
+    enabled: true
+    latency_checks: true
+    bandwidth_checks: false
+    connectivity_checks: true
+    check_interval_seconds: 60
+  
+  # Failover configuration
+  failover:
+    enabled: true
+    automatic: false  # Manual approval required
+    strategy: "active_passive"  # or "active_active"
+    health_threshold: 0.5  # 50% of nodes must be healthy
+    
+    # Failover triggers
+    triggers:
+      datacenter_isolation: true
+      majority_node_failure: true
+      network_partition: true
+      manual_trigger: true
+    
+    # Failover process
+    process:
+      pre_failover_checks: true
+      data_consistency_check: true
+      consumer_group_migration: true
+      producer_redirection: true
+      dns_update: false  # External DNS management
+  
+  # Data replication monitoring
+  replication:
+    monitor_lag: true
+    max_lag_seconds: 300  # 5 minutes
+    lag_alert_threshold: 180  # 3 minutes
+    
+    # Mirror maker monitoring (if used)
+    mirror_maker:
+      enabled: false
+      topics_to_monitor: ["important-topic-1", "important-topic-2"]
+      lag_threshold_messages: 1000

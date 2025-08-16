@@ -1,0 +1,200 @@
+# Development configuration for Kafka Self-Healing system
+# This configuration is optimized for development and testing environments
+
+cluster:
+  kafka_brokers:
+    - node_id: dev-kafka1
+      host: localhost
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service", "script"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 5
+        backoff_multiplier: 1.5
+        max_delay_seconds: 30
+
+  zookeeper_nodes:
+    - node_id: dev-zk1
+      host: localhost
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_service"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 3
+        backoff_multiplier: 1.5
+        max_delay_seconds: 15
+
+monitoring:
+  interval_seconds: 10
+  timeout_seconds: 5
+  concurrent_checks: true
+  health_check_retries: 1
+  methods: ["socket", "jmx", "zookeeper"]
+  
+  # Relaxed timeouts for development
+  jmx:
+    connection_timeout: 3
+    read_timeout: 5
+    authentication: false
+  
+  socket:
+    connection_timeout: 2
+    read_timeout: 3
+  
+  zookeeper:
+    four_letter_words: ["ruok", "stat"]
+    timeout: 3
+
+recovery:
+  max_attempts: 2
+  initial_delay_seconds: 5
+  backoff_multiplier: 1.5
+  max_delay_seconds: 60
+  
+  actions: ["restart_service", "script"]
+  
+  restart_service:
+    service_manager: "docker"  # Using Docker for development
+    kafka_service_name: "kafka"
+    zookeeper_service_name: "zookeeper"
+    timeout: 30
+  
+  script:
+    script_directory: "./scripts/dev"
+    timeout: 60
+    environment_variables:
+      KAFKA_HOME: "/opt/kafka"
+      ENVIRONMENT: "development"
+
+notifications:
+  smtp:
+    host: localhost
+    port: 1025  # MailHog for development
+    username: ""
+    password: ""
+    use_tls: false
+    use_ssl: false
+    from_email: "dev-kafka@localhost"
+    to_emails:
+      - "developer@localhost"
+    
+    templates:
+      failure_subject: "[DEV] Kafka Alert: {node_id} Recovery Failed"
+      recovery_subject: "[DEV] Kafka: {node_id} Recovered"
+  
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: false  # Reduce noise in development
+    on_max_retries_exceeded: true
+    on_system_error: true
+  
+  rate_limiting:
+    max_notifications_per_hour: 50
+    cooldown_period_minutes: 1
+
+logging:
+  level: DEBUG
+  file: logs/dev_application.log
+  max_size_mb: 10
+  backup_count: 3
+  format: "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+  
+  audit:
+    enabled: true
+    file: logs/dev_audit.log
+    max_size_mb: 10
+    backup_count: 3
+    include_sensitive_data: false
+  
+  performance:
+    enabled: true
+    file: logs/dev_performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 500
+
+security:
+  credentials:
+    storage_method: "environment"
+  
+  ssl:
+    enabled: false  # Disabled for development simplicity
+  
+  sasl:
+    enabled: false  # Disabled for development simplicity
+
+plugins:
+  discovery:
+    enabled: true
+    directories:
+      - "plugins/monitoring"
+      - "plugins/recovery"
+      - "plugins/notification"
+    auto_load: true
+  
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+  
+  recovery_plugins:
+    service_restart:
+      enabled: true
+      priority: 1
+    script_execution:
+      enabled: true
+      priority: 2
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+
+system:
+  max_concurrent_operations: 5
+  memory_limit_mb: 256
+  cpu_limit_percent: 50
+  
+  shutdown_timeout_seconds: 15
+  
+  self_monitoring:
+    enabled: true
+    interval_seconds: 60
+    memory_threshold_mb: 200
+    cpu_threshold_percent: 70
+  
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "json"  # JSON for easier debugging
+
+# Development-specific settings
+development:
+  # Enable additional debugging features
+  debug_mode: true
+  verbose_logging: true
+  
+  # Mock external dependencies for testing
+  mock_mode: false
+  
+  # Hot reload configuration changes
+  hot_reload: true
+  config_watch_interval: 5
+  
+  # Development tools integration
+  profiling:
+    enabled: false
+    output_file: "profile_output.prof"
+  
+  testing:
+    simulate_failures: false
+    failure_injection_rate: 0.0

@@ -1,0 +1,41 @@
+# Minimal configuration for Kafka Self-Healing system
+# This is the simplest configuration to get started
+
+cluster:
+  kafka_brokers:
+    - node_id: kafka1
+      host: localhost
+      port: 9092
+    
+    - node_id: kafka2
+      host: localhost
+      port: 9093
+
+  zookeeper_nodes:
+    - node_id: zk1
+      host: localhost
+      port: 2181
+
+monitoring:
+  interval_seconds: 30
+  timeout_seconds: 10
+  methods: ["socket"]
+
+recovery:
+  max_attempts: 3
+  initial_delay_seconds: 5
+  actions: ["restart_service"]
+
+notifications:
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: alerts@example.com
+    password: ${SMTP_PASSWORD}
+    from_email: kafka-alerts@example.com
+    to_emails:
+      - admin@example.com
+
+logging:
+  level: INFO
+  file: /var/log/kafka-self-healing/application.log

@@ -1,0 +1,253 @@
+# Docker-based configuration for Kafka Self-Healing system
+# This configuration is designed for containerized Kafka deployments
+
+cluster:
+  kafka_brokers:
+    - node_id: kafka-container-1
+      host: kafka1
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_container", "script"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 120
+    
+    - node_id: kafka-container-2
+      host: kafka2
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_container", "script"]
+      retry_policy:
+        max_attempts: 3
+        initial_delay_seconds: 10
+        backoff_multiplier: 2.0
+        max_delay_seconds: 120
+
+  zookeeper_nodes:
+    - node_id: zookeeper-container
+      host: zookeeper
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper"]
+      recovery_actions: ["restart_container"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 15
+        backoff_multiplier: 1.5
+        max_delay_seconds: 60
+
+monitoring:
+  interval_seconds: 20
+  timeout_seconds: 15
+  concurrent_checks: true
+  health_check_retries: 2
+  methods: ["socket", "jmx", "zookeeper"]
+  
+  jmx:
+    connection_timeout: 8
+    read_timeout: 12
+    authentication: false
+  
+  socket:
+    connection_timeout: 5
+    read_timeout: 8
+  
+  zookeeper:
+    four_letter_words: ["ruok", "stat"]
+    timeout: 8
+
+recovery:
+  max_attempts: 3
+  initial_delay_seconds: 10
+  backoff_multiplier: 2.0
+  max_delay_seconds: 180
+  
+  actions: ["restart_container", "script", "docker_compose"]
+  
+  # Docker container restart configuration
+  restart_container:
+    container_runtime: "docker"  # or "podman"
+    timeout: 60
+    force_kill_timeout: 30
+    health_check_retries: 5
+    health_check_interval: 10
+  
+  # Docker Compose operations
+  docker_compose:
+    compose_file: "/opt/kafka-deployment/docker-compose.yml"
+    timeout: 120
+    recreate_containers: false
+    pull_images: false
+  
+  # Script execution in containers
+  script:
+    script_directory: "/opt/kafka-recovery/scripts"
+    timeout: 90
+    execution_method: "docker_exec"  # Execute scripts inside containers
+    environment_variables:
+      KAFKA_HOME: "/opt/kafka"
+      CONTAINER_RUNTIME: "docker"
+
+notifications:
+  smtp:
+    host: ${SMTP_HOST:-localhost}
+    port: ${SMTP_PORT:-587}
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    use_tls: true
+    from_email: "kafka-docker@example.com"
+    to_emails:
+      - "devops@example.com"
+    
+    templates:
+      failure_subject: "[DOCKER] Kafka Container Alert: {node_id} Recovery Failed"
+      recovery_subject: "[DOCKER] Kafka Container: {node_id} Recovered"
+  
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+  
+  rate_limiting:
+    max_notifications_per_hour: 15
+    cooldown_period_minutes: 5
+
+logging:
+  level: INFO
+  file: /var/log/kafka-self-healing/docker.log
+  max_size_mb: 50
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - [CONTAINER] - %(message)s"
+  
+  audit:
+    enabled: true
+    file: /var/log/kafka-self-healing/docker_audit.log
+    max_size_mb: 50
+    backup_count: 5
+    include_sensitive_data: false
+  
+  performance:
+    enabled: true
+    file: /var/log/kafka-self-healing/docker_performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 1500
+
+security:
+  credentials:
+    storage_method: "environment"
+  
+  ssl:
+    enabled: false  # Typically handled by container orchestration
+  
+  sasl:
+    enabled: false
+
+plugins:
+  discovery:
+    enabled: true
+    directories:
+      - "/opt/kafka-healing/plugins/monitoring"
+      - "/opt/kafka-healing/plugins/recovery"
+      - "/opt/kafka-healing/plugins/notification"
+    auto_load: true
+  
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+    docker_monitoring:
+      enabled: true
+      priority: 4
+      config:
+        check_container_health: true
+        check_resource_usage: true
+        resource_thresholds:
+          cpu_percent: 80
+          memory_percent: 85
+  
+  recovery_plugins:
+    container_restart:
+      enabled: true
+      priority: 1
+    docker_compose_restart:
+      enabled: true
+      priority: 2
+    script_execution:
+      enabled: true
+      priority: 3
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+
+system:
+  max_concurrent_operations: 10
+  memory_limit_mb: 512
+  cpu_limit_percent: 60
+  
+  shutdown_timeout_seconds: 30
+  
+  self_monitoring:
+    enabled: true
+    interval_seconds: 45
+    memory_threshold_mb: 400
+    cpu_threshold_percent: 70
+  
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "prometheus"
+
+# Docker-specific configuration
+docker:
+  # Container management
+  container_management:
+    runtime: "docker"  # or "podman"
+    socket_path: "/var/run/docker.sock"
+    api_version: "auto"
+    timeout: 60
+  
+  # Network configuration
+  network:
+    name: "kafka-network"
+    driver: "bridge"
+  
+  # Volume management
+  volumes:
+    kafka_data: "/opt/kafka/data"
+    zookeeper_data: "/opt/zookeeper/data"
+    logs: "/var/log/kafka"
+  
+  # Health check configuration
+  health_checks:
+    enabled: true
+    interval: "30s"
+    timeout: "10s"
+    retries: 3
+    start_period: "60s"
+  
+  # Resource limits
+  resource_limits:
+    kafka_memory: "2g"
+    kafka_cpu: "1.5"
+    zookeeper_memory: "1g"
+    zookeeper_cpu: "0.5"
+  
+  # Logging configuration
+  logging:
+    driver: "json-file"
+    options:
+      max_size: "100m"
+      max_file: "3"

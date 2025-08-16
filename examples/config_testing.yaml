@@ -1,0 +1,297 @@
+# Testing configuration for Kafka Self-Healing system
+# This configuration is designed for testing and validation scenarios
+
+cluster:
+  kafka_brokers:
+    - node_id: test-kafka-1
+      host: localhost
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx", "mock"]
+      recovery_actions: ["mock_restart", "script"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 2
+        backoff_multiplier: 1.5
+        max_delay_seconds: 10
+    
+    - node_id: test-kafka-2
+      host: localhost
+      port: 9093
+      jmx_port: 10000
+      monitoring_methods: ["socket", "jmx", "mock"]
+      recovery_actions: ["mock_restart", "script"]
+      retry_policy:
+        max_attempts: 2
+        initial_delay_seconds: 2
+        backoff_multiplier: 1.5
+        max_delay_seconds: 10
+
+  zookeeper_nodes:
+    - node_id: test-zk-1
+      host: localhost
+      port: 2181
+      monitoring_methods: ["socket", "zookeeper", "mock"]
+      recovery_actions: ["mock_restart"]
+      retry_policy:
+        max_attempts: 1
+        initial_delay_seconds: 1
+        backoff_multiplier: 1.0
+        max_delay_seconds: 5
+
+monitoring:
+  interval_seconds: 5  # Fast monitoring for testing
+  timeout_seconds: 3
+  concurrent_checks: true
+  health_check_retries: 1
+  methods: ["socket", "jmx", "zookeeper", "mock"]
+  
+  jmx:
+    connection_timeout: 2
+    read_timeout: 3
+    authentication: false
+  
+  socket:
+    connection_timeout: 1
+    read_timeout: 2
+  
+  zookeeper:
+    four_letter_words: ["ruok"]
+    timeout: 2
+  
+  # Mock monitoring for testing
+  mock:
+    enabled: true
+    failure_simulation: true
+    failure_rate: 0.1  # 10% failure rate
+    response_time_ms: 50
+
+recovery:
+  max_attempts: 2
+  initial_delay_seconds: 1
+  backoff_multiplier: 1.5
+  max_delay_seconds: 10
+  
+  actions: ["mock_restart", "script", "test_action"]
+  
+  # Mock recovery for testing
+  mock_restart:
+    enabled: true
+    success_rate: 0.8  # 80% success rate
+    execution_time_ms: 100
+    simulate_failures: true
+  
+  # Script execution for testing
+  script:
+    script_directory: "./test_scripts"
+    timeout: 30
+    environment_variables:
+      TEST_MODE: "true"
+      KAFKA_HOME: "/opt/kafka"
+  
+  # Test-specific recovery action
+  test_action:
+    enabled: true
+    always_succeed: false
+    delay_ms: 500
+
+notifications:
+  # Use MailHog or similar for testing
+  smtp:
+    host: localhost
+    port: 1025  # MailHog default port
+    username: ""
+    password: ""
+    use_tls: false
+    use_ssl: false
+    from_email: "test-kafka@localhost"
+    to_emails:
+      - "test@localhost"
+    
+    templates:
+      failure_subject: "[TEST] Kafka Alert: {node_id} Recovery Failed"
+      recovery_subject: "[TEST] Kafka: {node_id} Recovered"
+  
+  # Mock notifications for testing
+  mock:
+    enabled: true
+    always_succeed: true
+    delivery_delay_ms: 10
+  
+  triggers:
+    on_recovery_failure: true
+    on_recovery_success: true
+    on_max_retries_exceeded: true
+    on_system_error: true
+  
+  rate_limiting:
+    max_notifications_per_hour: 100  # High limit for testing
+    cooldown_period_minutes: 0  # No cooldown for testing
+
+logging:
+  level: DEBUG  # Verbose logging for testing
+  file: test_logs/test_application.log
+  max_size_mb: 10
+  backup_count: 2
+  format: "%(asctime)s - %(name)s - %(levelname)s - [TEST] - %(message)s"
+  
+  audit:
+    enabled: true
+    file: test_logs/test_audit.log
+    max_size_mb: 10
+    backup_count: 2
+    include_sensitive_data: false
+  
+  performance:
+    enabled: true
+    file: test_logs/test_performance.log
+    log_slow_operations: true
+    slow_operation_threshold_ms: 100  # Lower threshold for testing
+
+security:
+  credentials:
+    storage_method: "environment"
+  
+  ssl:
+    enabled: false  # Disabled for testing simplicity
+  
+  sasl:
+    enabled: false  # Disabled for testing simplicity
+
+plugins:
+  discovery:
+    enabled: true
+    directories:
+      - "test_plugins/monitoring"
+      - "test_plugins/recovery"
+      - "test_plugins/notification"
+    auto_load: true
+  
+  monitoring_plugins:
+    jmx_monitoring:
+      enabled: true
+      priority: 1
+    socket_monitoring:
+      enabled: true
+      priority: 2
+    zookeeper_monitoring:
+      enabled: true
+      priority: 3
+    mock_monitoring:
+      enabled: true
+      priority: 4
+      config:
+        simulate_failures: true
+        failure_patterns: ["intermittent", "permanent", "slow_response"]
+  
+  recovery_plugins:
+    mock_restart:
+      enabled: true
+      priority: 1
+    script_execution:
+      enabled: true
+      priority: 2
+    test_recovery:
+      enabled: true
+      priority: 3
+  
+  notification_plugins:
+    email_notification:
+      enabled: true
+      priority: 1
+    mock_notification:
+      enabled: true
+      priority: 2
+
+system:
+  max_concurrent_operations: 5
+  memory_limit_mb: 128  # Low limit for testing
+  cpu_limit_percent: 30
+  
+  shutdown_timeout_seconds: 5  # Fast shutdown for testing
+  
+  self_monitoring:
+    enabled: true
+    interval_seconds: 10
+    memory_threshold_mb: 100
+    cpu_threshold_percent: 50
+  
+  metrics:
+    enabled: true
+    port: 8080
+    endpoint: "/metrics"
+    format: "json"  # JSON for easier testing
+
+# Testing-specific configuration
+testing:
+  # Test execution settings
+  execution:
+    fast_mode: true
+    skip_slow_tests: false
+    parallel_execution: true
+    max_test_duration_seconds: 300
+  
+  # Failure simulation
+  failure_simulation:
+    enabled: true
+    scenarios:
+      - name: "kafka_broker_failure"
+        target_nodes: ["test-kafka-1"]
+        failure_type: "connection_timeout"
+        duration_seconds: 30
+      - name: "zookeeper_failure"
+        target_nodes: ["test-zk-1"]
+        failure_type: "service_unavailable"
+        duration_seconds: 15
+      - name: "network_partition"
+        target_nodes: ["test-kafka-1", "test-kafka-2"]
+        failure_type: "network_unreachable"
+        duration_seconds: 45
+  
+  # Mock services
+  mock_services:
+    kafka_broker:
+      enabled: true
+      port: 19092
+      simulate_jmx: true
+      jmx_port: 19999
+    zookeeper:
+      enabled: true
+      port: 12181
+      four_letter_words: true
+    smtp_server:
+      enabled: true
+      port: 1025
+  
+  # Test data generation
+  test_data:
+    generate_metrics: true
+    metrics_interval_seconds: 1
+    generate_logs: true
+    log_patterns: ["INFO", "WARN", "ERROR"]
+  
+  # Validation settings
+  validation:
+    strict_mode: true
+    validate_recovery_success: true
+    validate_notification_delivery: true
+    validate_log_entries: true
+    
+    # Expected behavior
+    expected_monitoring_interval: 5
+    expected_recovery_attempts: 2
+    expected_notification_count: 1
+  
+  # Performance testing
+  performance:
+    load_testing: false
+    concurrent_nodes: 10
+    monitoring_load_multiplier: 1.0
+    recovery_load_multiplier: 1.0
+  
+  # Integration testing
+  integration:
+    external_kafka: false
+    external_zookeeper: false
+    external_smtp: false
+    docker_compose_file: "docker-compose.test.yml"
