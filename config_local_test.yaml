@@ -1,0 +1,59 @@
+# Simple Local Test Configuration for Kafka Self-Healing System
+cluster:
+  cluster_name: "local-test-cluster"
+  monitoring_interval_seconds: 30
+  nodes:
+    - node_id: kafka1
+      node_type: kafka_broker
+      host: localhost
+      port: 9092
+      jmx_port: 9999
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service"]
+    - node_id: kafka2
+      node_type: kafka_broker
+      host: localhost
+      port: 9093
+      jmx_port: 9998
+      monitoring_methods: ["socket", "jmx"]
+      recovery_actions: ["restart_service"]
+    - node_id: zk1
+      node_type: zookeeper
+      host: localhost
+      port: 2181
+      monitoring_methods: ["socket"]
+      recovery_actions: ["restart_service"]
+
+monitoring:
+  interval_seconds: 30
+  timeout_seconds: 10
+  methods: ["socket", "jmx"]
+
+recovery:
+  max_attempts: 3
+  initial_delay_seconds: 5
+  backoff_multiplier: 2.0
+  max_delay_seconds: 60
+  actions: ["restart_service"]
+
+notification:
+  smtp_host: localhost
+  smtp_port: 1025  # MailHog SMTP port
+  smtp_username: ""
+  smtp_password: ""
+  use_tls: false
+  use_ssl: false
+  sender_email: "kafka-alerts@localhost"
+  recipients:
+    - "admin@localhost"
+  subject_prefix: "[Kafka Self-Healing Test]"
+
+logging:
+  level: INFO
+  file: "logs/kafka_self_healing.log"
+  max_size_mb: 50
+  backup_count: 3
+
+system:
+  max_concurrent_operations: 3
+  shutdown_timeout_seconds: 30
